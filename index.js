@@ -22,11 +22,13 @@ mongoose.connect(process.env.MONGO_URI, {
 const chatRoutes = require("./routes/chat");
 const hotelRoutes = require("./routes/hotels");
 const citiesRoutes = require("./routes/cities");
+const authRoutes = require("./routes/auth");
 
 // Utilisation des routes
 app.use("/api/chat", chatRoutes);
 app.use("/api/hotels", hotelRoutes);
 app.use("/api/available-cities", citiesRoutes);
+app.use("/api", authRoutes);
 
 // Route GET de base
 app.get("/", (req, res) => {

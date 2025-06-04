@@ -20,3 +20,11 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/images/paris.jpeg
+    - assets/images/madrid.jpeg
+    - assets/images/newyork.jpeg
+    - assets/images/istanbul.jpeg
+    - assets/images/casablanca.jpeg
+    - assets/images/rabat.jpeg
+    - assets/images/login_background.jpg

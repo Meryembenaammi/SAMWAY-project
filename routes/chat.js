@@ -4,6 +4,8 @@ const fetch = require('node-fetch');
 const router = express.Router();
 const { executeAction } = require('../services/actionExecutor');
 const { sendConfirmationEmail } = require('../services/emailService');
+const Conversation = require('../models/Conversation');
+const mongoose = require('mongoose');
 
 const url = 'mongodb://localhost:27017';
 const dbName = 'TravelPlanner';
@@ -192,13 +194,87 @@ const AIRPORTS_MANUAL = {
   ]
 };
 
+// Fonction pour calculer la durée du séjour
+const calculateStayDuration = (departureDate, arrivalDate) => {
+  if (!departureDate || !arrivalDate) return 0; // Retourner 0 si pas de dates spécifiées
+  
+  const start = new Date(departureDate);
+  const end = new Date(arrivalDate);
+  
+  // Vérifier que les dates sont valides
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
+  if (start > end) return 0; // Si la date de départ est après la date d'arrivée
+  
+  // Calculer la différence en jours
+  const diffTime = end.getTime() - start.getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  
+  // Retourner la durée calculée
+  return diffDays > 0 ? diffDays : 0;
+};
+
+// Fonction pour générer un itinéraire dynamique
+const generateDynamicItinerary = (duration) => {
+  if (duration <= 0) return {}; // Retourner un itinéraire vide si la durée est invalide
+  
+  const itinerary = {};
+  for (let i = 1; i <= duration; i++) {
+    itinerary[`day${i}`] = {
+      morning: {
+        activities: ["À planifier"],
+        local_tips: "Journée à personnaliser selon vos préférences",
+        hidden_gems: "Découvrez les quartiers moins touristiques"
+      },
+      afternoon: {
+        activities: ["À planifier"],
+        local_tips: "Journée à personnaliser selon vos préférences",
+        hidden_gems: "Explorez les cafés et restaurants locaux"
+      },
+      evening: {
+        activities: ["À planifier"],
+        local_tips: "Journée à personnaliser selon vos préférences",
+        hidden_gems: "Profitez de l\'ambiance nocturne parisienne"
+      }
+    };
+  }
+  return itinerary;
+};
+
 // Nouvelle fonction pour le Chain of Thought Reasoning
 const chainOfThoughtReasoning = async (userMessage, context) => {
   console.log('🧠 [ChainOfThought] Début de la réflexion pour:', userMessage);
   
+  // Calculer la durée du séjour
+  const duration = calculateStayDuration(context.departureDate, context.arrivalDate);
+  if (duration <= 0) {
+    console.log('⚠️ Durée de séjour invalide:', duration);
+    return {
+      response: "Désolé, les dates fournies ne sont pas valides. Veuillez vérifier que la date de retour est après la date de départ.",
+      reasoning: {
+        steps: [],
+        suggested_itinerary: {},
+        hotel_suggestions: {},
+        restaurant_suggestions: {},
+        local_experiences: {}
+      }
+    };
+  }
+
+  const dynamicItinerary = generateDynamicItinerary(duration);
+  
   const prompt = `En tant qu'expert voyage passionné et créatif, analysez la demande suivante et créez une expérience de voyage unique et mémorable :
   Message: "${userMessage}"
   Contexte: ${JSON.stringify(context)}
+  Durée du séjour: ${duration} jours
+  
+  IMPORTANT: Vous DEVEZ générer un itinéraire pour EXACTEMENT ${duration} jours. Chaque jour doit avoir des activités pour le matin, l'après-midi et le soir.
+  L'itinéraire doit être structuré comme suit:
+  {
+    "day1": { "morning": {...}, "afternoon": {...}, "evening": {...} },
+    "day2": { "morning": {...}, "afternoon": {...}, "evening": {...} },
+    ...
+    "day${duration}": { "morning": {...}, "afternoon": {...}, "evening": {...} }
+  }
   
   Répondez UNIQUEMENT avec un objet JSON valide, sans backticks ni marqueurs de code. Format attendu :
   {
@@ -218,59 +294,7 @@ const chainOfThoughtReasoning = async (userMessage, context) => {
           "personalization": "Comment créer une expérience authentique et locale"
         }
       ],
-      "suggested_itinerary": {
-        "day1": {
-          "morning": {
-            "activities": ["activité1", "activité2"],
-            "local_tips": "Conseils d'expert pour cette période",
-            "hidden_gems": "Endroits secrets à découvrir"
-          },
-          "afternoon": {
-            "activities": ["activité1", "activité2"],
-            "local_tips": "Conseils d'expert pour cette période",
-            "hidden_gems": "Endroits secrets à découvrir"
-          },
-          "evening": {
-            "activities": ["activité1", "activité2"],
-            "local_tips": "Conseils d'expert pour cette période",
-            "hidden_gems": "Endroits secrets à découvrir"
-          }
-        },
-        "day2": {
-          "morning": {
-            "activities": ["activité1", "activité2"],
-            "local_tips": "Conseils d'expert pour cette période",
-            "hidden_gems": "Endroits secrets à découvrir"
-          },
-          "afternoon": {
-            "activities": ["activité1", "activité2"],
-            "local_tips": "Conseils d'expert pour cette période",
-            "hidden_gems": "Endroits secrets à découvrir"
-          },
-          "evening": {
-            "activities": ["activité1", "activité2"],
-            "local_tips": "Conseils d'expert pour cette période",
-            "hidden_gems": "Endroits secrets à découvrir"
-          }
-        },
-        "day3": {
-          "morning": {
-            "activities": ["activité1", "activité2"],
-            "local_tips": "Conseils d'expert pour cette période",
-            "hidden_gems": "Endroits secrets à découvrir"
-          },
-          "afternoon": {
-            "activities": ["activité1", "activité2"],
-            "local_tips": "Conseils d'expert pour cette période",
-            "hidden_gems": "Endroits secrets à découvrir"
-          },
-          "evening": {
-            "activities": ["activité1", "activité2"],
-            "local_tips": "Conseils d'expert pour cette période",
-            "hidden_gems": "Endroits secrets à découvrir"
-          }
-        }
-      },
+      "suggested_itinerary": ${JSON.stringify(dynamicItinerary)},
       "hotel_suggestions": {
         "budget": {
           "options": ["hôtel1", "hôtel2"],
@@ -325,28 +349,52 @@ const chainOfThoughtReasoning = async (userMessage, context) => {
     console.log('🧠 Réponse nettoyée:', cleanedResponse);
     const parsedResponse = JSON.parse(cleanedResponse);
 
+    // Vérifier et ajuster l'itinéraire si nécessaire
+    let suggestedItinerary = parsedResponse.reasoning?.suggested_itinerary || dynamicItinerary;
+    
+    // S'assurer que l'itinéraire a le bon nombre de jours
+    if (Object.keys(suggestedItinerary).length !== duration) {
+      console.log(`⚠️ Ajustement de l'itinéraire: ${Object.keys(suggestedItinerary).length} jours trouvés, ${duration} jours requis`);
+      
+      // Si l'itinéraire a moins de jours que requis, ajouter les jours manquants
+      for (let i = Object.keys(suggestedItinerary).length + 1; i <= duration; i++) {
+        suggestedItinerary[`day${i}`] = {
+          morning: {
+            activities: ["À planifier"],
+            local_tips: "Journée à personnaliser selon vos préférences",
+            hidden_gems: "Découvrez les quartiers moins touristiques"
+          },
+          afternoon: {
+            activities: ["À planifier"],
+            local_tips: "Journée à personnaliser selon vos préférences",
+            hidden_gems: "Explorez les cafés et restaurants locaux"
+          },
+          evening: {
+            activities: ["À planifier"],
+            local_tips: "Journée à personnaliser selon vos préférences",
+            hidden_gems: "Profitez de l'ambiance nocturne parisienne"
+          }
+        };
+      }
+    }
+
+    // Si l'itinéraire a plus de jours que requis, supprimer les jours en trop
+    if (Object.keys(suggestedItinerary).length > duration) {
+      console.log(`⚠️ Suppression des jours en trop: ${Object.keys(suggestedItinerary).length} jours trouvés, ${duration} jours requis`);
+      const daysToKeep = Object.keys(suggestedItinerary).slice(0, duration);
+      const newItinerary = {};
+      daysToKeep.forEach(day => {
+        newItinerary[day] = suggestedItinerary[day];
+      });
+      suggestedItinerary = newItinerary;
+    }
+
     // Vérifier et compléter la structure si nécessaire
     return {
       response: parsedResponse.response || "Je n'ai pas pu générer une réponse appropriée.",
       reasoning: {
         steps: parsedResponse.reasoning?.steps || [],
-        suggested_itinerary: parsedResponse.reasoning?.suggested_itinerary || {
-          day1: { 
-            morning: { activities: [], local_tips: "", hidden_gems: "" },
-            afternoon: { activities: [], local_tips: "", hidden_gems: "" },
-            evening: { activities: [], local_tips: "", hidden_gems: "" }
-          },
-          day2: { 
-            morning: { activities: [], local_tips: "", hidden_gems: "" },
-            afternoon: { activities: [], local_tips: "", hidden_gems: "" },
-            evening: { activities: [], local_tips: "", hidden_gems: "" }
-          },
-          day3: { 
-            morning: { activities: [], local_tips: "", hidden_gems: "" },
-            afternoon: { activities: [], local_tips: "", hidden_gems: "" },
-            evening: { activities: [], local_tips: "", hidden_gems: "" }
-          }
-        },
+        suggested_itinerary: suggestedItinerary,
         hotel_suggestions: parsedResponse.reasoning?.hotel_suggestions || {
           budget: { options: [], local_insights: "", neighborhood_tips: "" },
           mid_range: { options: [], local_insights: "", neighborhood_tips: "" },
@@ -366,7 +414,7 @@ const chainOfThoughtReasoning = async (userMessage, context) => {
     };
   } catch (error) {
     console.error('❌ [ChainOfThought] Erreur lors de la réflexion:', error);
-    // En cas d'erreur, retourner une structure par défaut
+    // En cas d'erreur, retourner une structure par défaut avec l'itinéraire dynamique
     return {
       response: "Je suis désolé, je n'ai pas pu traiter votre demande correctement. Veuillez réessayer.",
       reasoning: {
@@ -384,59 +432,7 @@ const chainOfThoughtReasoning = async (userMessage, context) => {
             personalization: "Recherche d'activités pour tous les goûts"
           }
         ],
-        suggested_itinerary: {
-          day1: {
-            morning: {
-              activities: ["Visite de la Tour Eiffel"],
-              local_tips: "Arrivez tôt pour éviter les foules",
-              hidden_gems: "Le jardin du Trocadéro offre une vue imprenable"
-            },
-            afternoon: {
-              activities: ["Croisière sur la Seine"],
-              local_tips: "Réservez en ligne pour de meilleurs prix",
-              hidden_gems: "Les quais de Seine moins connus"
-            },
-            evening: {
-              activities: ["Dîner dans un restaurant parisien"],
-              local_tips: "Réservez à l'avance pour les restaurants populaires",
-              hidden_gems: "Les bistrots authentiques du quartier"
-            }
-          },
-          day2: {
-            morning: {
-              activities: ["Visite du Louvre"],
-              local_tips: "Entrée gratuite le premier dimanche du mois",
-              hidden_gems: "Les passages couverts à proximité"
-            },
-            afternoon: {
-              activities: ["Exploration de Montmartre"],
-              local_tips: "Visitez les vignes de Montmartre",
-              hidden_gems: "Le musée de Montmartre"
-            },
-            evening: {
-              activities: ["Dîner à Montmartre"],
-              local_tips: "Les restaurants avec vue panoramique",
-              hidden_gems: "Les cabarets historiques"
-            }
-          },
-          day3: {
-            morning: {
-              activities: ["Visite de l'Arc de Triomphe"],
-              local_tips: "Vue panoramique à 360°",
-              hidden_gems: "Les Champs-Élysées au petit matin"
-            },
-            afternoon: {
-              activities: ["Musée d'Orsay"],
-              local_tips: "Entrée gratuite le premier dimanche du mois",
-              hidden_gems: "Le jardin des Tuileries"
-            },
-            evening: {
-              activities: ["Dernier dîner parisien"],
-              local_tips: "Les restaurants gastronomiques",
-              hidden_gems: "Les bars à vins authentiques"
-            }
-          }
-        },
+        suggested_itinerary: dynamicItinerary,
         hotel_suggestions: {
           budget: {
             options: ["Hôtel Turenne Le Marais", "citizenM Paris Gare de Lyon"],
@@ -450,7 +446,7 @@ const chainOfThoughtReasoning = async (userMessage, context) => {
           },
           luxury: {
             options: ["Le Bristol Paris", "Hôtel Plaza Athénée"],
-            local_insights: "Hôtels de légende avec service exceptionnel",
+            local_insights: "Hôtels de luxe avec service exceptionnel",
             neighborhood_tips: "Quartiers prestigieux et élégants"
           }
         },
@@ -502,18 +498,99 @@ const handleUserAction = async (action, params) => {
   }
 };
 
+// Function to parse structured travel messages
+const parseTravelMessage = (message) => {
+  console.log('🔍 [Parser] Analyzing message:', message);
+  
+  // Pattern: "Voyage de [departure] à [arrival] du [departure_date] au [arrival_date]"
+  const pattern = /Voyage de (.*?) à (.*?) du (.*?) au (.*?)$/;
+  const match = message.match(pattern);
+  
+  if (match) {
+    const [_, departureLocation, arrivalLocation, departureDate, arrivalDate] = match;
+    console.log('✅ [Parser] Travel details extracted:', {
+      departureLocation,
+      arrivalLocation,
+      departureDate,
+      arrivalDate
+    });
+    return {
+      departureLocation: departureLocation.trim(),
+      arrivalLocation: arrivalLocation.trim(),
+      departureDate: departureDate.trim(),
+      arrivalDate: arrivalDate.trim()
+    };
+  }
+  
+  console.log('❌ [Parser] No structured travel message pattern found');
+  return null;
+};
+
+// Fonction de détection de requête illégale (insensible à la casse et aux accents)
+function isIllegalRequest(message) {
+  const illegalKeywords = [
+    'pirater', 'faux passeport', 'drogue', 'arnaque', 'hack', 'illégal', 'illégale', 'terrorisme', 'crime'
+  ];
+  if (!message) return false;
+  // Supprime les accents et met en minuscule
+  const lowerMsg = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return illegalKeywords.some(keyword => lowerMsg.includes(keyword));
+}
+
 // Route principale pour le chat
 router.post('/', async (req, res) => {
-  let { message, dateVoyage, origin } = req.body;
+  let { message, dateVoyage, origin, userId } = req.body;
   console.log('📝 Message reçu:', message);
+  console.log('👤 UserId reçu:', userId);
+  
+  // Log the full request body to see what is received from frontend
+  console.log('🔍 Req body received:', req.body);
+
   if (!message) return res.status(400).json({ error: 'Message requis' });
+
+  // Validation de l'userId
+  if (!userId) {
+    // Générer un nouvel userId si non fourni
+    userId = new mongoose.Types.ObjectId();
+    console.log('🆕 Nouvel userId généré:', userId);
+  }
+
+  // Filtre anti-action illégale (tout en haut)
+  if (isIllegalRequest(message)) {
+    return res.status(403).json({
+      response: "Je suis désolé, je ne peux pas vous aider pour cette demande."
+    });
+  }
+
+  // Convertir l'userId en ObjectId
+  let userObjectId;
+  try {
+    userObjectId = new mongoose.Types.ObjectId(userId);
+    console.log('✅ userId converti en ObjectId:', userObjectId);
+  } catch (e) {
+    console.error('❌ Erreur conversion userId en ObjectId:', e);
+    // Si l'userId n'est pas un format valide, en générer un nouveau
+    userObjectId = new mongoose.Types.ObjectId();
+    console.log('🆕 Nouvel ObjectId généré:', userObjectId);
+  }
 
   try {
     // 1. Extraction des informations de base
-    if (!dateVoyage) {
+    let departureDate, arrivalDate;
+    const travelDetails = parseTravelMessage(message);
+    if (travelDetails) {
+      departureDate = travelDetails.departureDate;
+      arrivalDate = travelDetails.arrivalDate;
+      console.log('📅 Dates extraites:', { departureDate, arrivalDate });
+    } else if (!dateVoyage) {
       dateVoyage = extractDateFromMessage(message);
       if (dateVoyage) {
         console.log('📅 Date de voyage détectée automatiquement:', dateVoyage);
+        departureDate = dateVoyage;
+        // Par défaut, on considère un séjour de 3 jours si pas de date de retour spécifiée
+        const endDate = new Date(dateVoyage);
+        endDate.setDate(endDate.getDate() + 3);
+        arrivalDate = endDate.toISOString().split('T')[0];
       }
     }
 
@@ -521,7 +598,8 @@ router.post('/', async (req, res) => {
     if (!result) {
       console.log('❌ Ville ou quartier non détecté dans le message');
       return res.status(200).json({
-        response: `Je n'ai pas identifié de quartier ou de ville. Essayez par exemple : "Que faire à Montmartre", "Hôtels à Manhattan", ou "Activités à Taksim".`
+        response: `Je n'ai pas identifié de quartier ou de ville. Essayez par exemple : "Que faire à Montmartre", "Hôtels à Manhattan", ou "Activités à Taksim".`,
+        userId: userObjectId.toString() // Retourner l'userId pour le frontend
       });
     }
 
@@ -532,8 +610,11 @@ router.post('/', async (req, res) => {
     const context = {
       ville,
       quartier,
+      departureDate,
+      arrivalDate,
       dateVoyage,
-      origin
+      origin,
+      userId: userObjectId.toString() // Ajouter l'userId au contexte
     };
     
     const reasoning = await chainOfThoughtReasoning(message, context);
@@ -704,10 +785,15 @@ router.post('/', async (req, res) => {
     }
 
     // 5. Construction du prompt final avec l'itinéraire suggéré
+    const duration = calculateStayDuration(departureDate, arrivalDate);
+    console.log(`📅 Durée du séjour calculée: ${duration} jours`);
+
     const prompt = `En tant qu'assistant de voyage SAMWay, créez un plan de voyage détaillé pour ${ville} dans le quartier ${quartier}. Structurez votre réponse comme un véritable plan de voyage avec des conseils pratiques.
 
 PLAN DE VOYAGE - ${ville} (${quartier})
 =====================================
+
+IMPORTANT: Vous DEVEZ générer un itinéraire pour EXACTEMENT ${duration} jours. Chaque jour doit avoir des activités pour le matin, l'après-midi et le soir.
 
 1. ARRIVÉE
 ----------
@@ -722,22 +808,12 @@ PLAN DE VOYAGE - ${ville} (${quartier})
 - Points forts : [Pourquoi ce choix est idéal]
 - Prix par nuit : [Montant]
 
-3. ITINÉRAIRE JOUR PAR JOUR
+3. ITINÉRAIRE JOUR PAR JOUR (${duration} jours)
 --------------------------
-Jour 1 :
+${Array.from({length: duration}, (_, i) => `Jour ${i + 1} :
 - Matin : [Activité 1] - [Conseils pratiques]
 - Après-midi : [Activité 2] - [Conseils pratiques]
-- Soirée : [Activité 3] - [Conseils pratiques]
-
-Jour 2 :
-- Matin : [Activité 1] - [Conseils pratiques]
-- Après-midi : [Activité 2] - [Conseils pratiques]
-- Soirée : [Activité 3] - [Conseils pratiques]
-
-Jour 3 :
-- Matin : [Activité 1] - [Conseils pratiques]
-- Après-midi : [Activité 2] - [Conseils pratiques]
-- Soirée : [Activité 3] - [Conseils pratiques]
+- Soirée : [Activité 3] - [Conseils pratiques]`).join('\n\n')}
 
 4. RESTAURATION
 --------------
@@ -747,11 +823,11 @@ Jour 3 :
 
 5. BUDGET ESTIMÉ
 ---------------
-- Hébergement : [Montant]
+- Hébergement : [Montant] (${duration} nuits)
 - Activités : [Montant]
 - Restauration : [Montant]
 - Transport : [Montant]
-Total : [Montant total] € pour [durée]
+Total : [Montant total] € pour ${duration} jours
 
 6. CONSEILS PRATIQUES
 --------------------
@@ -785,15 +861,17 @@ Assurez-vous de :
 3. Fournir des informations détaillées sur les transports
 4. Donner des conseils locaux utiles
 5. Calculer un budget réaliste
-6. Suivre EXACTEMENT le format demandé`;
+6. Suivre EXACTEMENT le format demandé
+7. Générer un itinéraire pour EXACTEMENT ${duration} jours`;
 
     // 6. Appel à l'API Gemini avec le nouveau prompt
     const responseText = await callGeminiAPI(prompt);
     console.log('🎉 Réponse de Gemini:', responseText);
 
     // 7. Envoi de la réponse avec les données nécessaires pour les actions
-    res.status(200).json({ 
+    const response = { 
       response: responseText,
+      userId: userObjectId.toString(), // Ajouter l'userId à la réponse
       reasoning: {
         steps: reasoning.steps,
         suggested_itinerary: reasoning.suggested_itinerary,
@@ -812,11 +890,68 @@ Assurez-vous de :
         airports: Array.isArray(filteredAirports) ? filteredAirports : [],
         flights: Array.isArray(flights) ? flights.slice(0, 5) : []
       }
-    });
+    };
+
+    // Sauvegarder la conversation avec le nouvel userId
+    try {
+      console.log('Attempting to save conversation for userId ObjectId:', userObjectId);
+      
+      // Generate a simple title for the conversation
+      const conversationTitle = ville ? `Voyage à ${ville}` : message.substring(0, Math.min(message.length, 50)) + '...';
+
+      // Créer ou mettre à jour la conversation
+      const conversation = await Conversation.findOneAndUpdate(
+        { userId: userObjectId },
+        {
+          $push: {
+            messages: {
+              role: 'user',
+              text: message,
+              timestamp: new Date()
+            }
+          },
+          $set: {
+            detectedCity: ville || '',
+            departureLocation: origin || '',
+            arrivalLocation: ville || '',
+            departureDate: departureDate || '',
+            arrivalDate: arrivalDate || '',
+            updatedAt: new Date(),
+            title: conversationTitle
+          }
+        },
+        { upsert: true, new: true }
+      );
+      console.log('User message saved. Conversation ID:', conversation?._id);
+
+      // Ajouter la réponse du bot à la conversation
+      await Conversation.findByIdAndUpdate(
+        conversation._id,
+        {
+          $push: {
+            messages: {
+              role: 'bot',
+              text: responseText,
+              data: response.data,
+              reasoning: response.reasoning,
+              timestamp: new Date()
+            }
+          }
+        }
+      );
+      console.log('Bot message added to conversation.');
+    } catch (error) {
+      console.error('❌ Erreur lors de la sauvegarde de la conversation:', error);
+    }
+
+    res.status(200).json(response);
 
   } catch (error) {
     console.error('❌ Erreur lors de la récupération des données:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      userId: userObjectId.toString() // Inclure l'userId même en cas d'erreur
+    });
   }
 });
 
@@ -838,6 +973,13 @@ router.post('/action', async (req, res) => {
 router.post('/reservation-action', async (req, res) => {
   const { action, params, message, modification } = req.body;
   console.log('📝 Action de réservation reçue:', action);
+
+  // Filtre anti-action illégale
+  if (isIllegalRequest(message)) {
+    return res.status(403).json({
+      response: "Je suis désolé, je ne peux pas vous aider pour cette demande."
+    });
+  }
 
   try {
     if (action === 'confirm') {
@@ -865,7 +1007,13 @@ router.post('/reservation-action', async (req, res) => {
         <p>Prix total: ${bookingResult.totalPrice}</p>
       `;
       
-      await sendConfirmationEmail(bookingParams.userEmail, tripSummary);
+      await sendConfirmationEmail(
+        bookingParams.userEmail,
+        tripSummary,
+        bookingParams.departureLocation || bookingParams.departure || '',
+        bookingParams.arrivalLocation || bookingParams.destination || '',
+        bookingParams.userName || ''
+      );
       console.log('📧 Email de confirmation envoyé');
 
       return res.status(200).json({
@@ -876,23 +1024,40 @@ router.post('/reservation-action', async (req, res) => {
       });
 
     } else if (action === 'refuse') {
-      // Situation 2: Refus de la proposition
-      console.log('❌ Refus de la proposition');
+      console.log('Refus de la proposition');
       
-      // 1. Création du contexte pour le nouveau raisonnement
+      // 1. Récupérer les dates depuis params ou générer par défaut
+      let departureDate = params?.departureDate;
+      let arrivalDate = params?.arrivalDate;
+
+      // Si aucune date, générer par défaut (aujourd'hui + 3 jours)
+      if (!departureDate) {
+        const today = new Date();
+        departureDate = today.toISOString().slice(0, 10);
+        const outDate = new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000);
+        arrivalDate = outDate.toISOString().slice(0, 10);
+      } else if (!arrivalDate) {
+        const inDate = new Date(departureDate);
+        const outDate = new Date(inDate.getTime() + 3 * 24 * 60 * 60 * 1000);
+        arrivalDate = outDate.toISOString().slice(0, 10);
+      }
+
+      // 2. Création du contexte pour le nouveau raisonnement
       const context = {
         ...params,
         previousRejection: true,
-        rejectionReason: message
+        rejectionReason: message,
+        departureDate,
+        arrivalDate
       };
 
-      // 2. Relancement du raisonnement avec le nouveau contexte
+      // 3. Relancement du raisonnement avec le nouveau contexte
       const reasoning = await chainOfThoughtReasoning(message, context);
       console.log('🧠 Nouveau raisonnement effectué');
 
       return res.status(200).json({
-        response: "D'accord, je vous propose d'autres options !",
-        reasoning,
+        response: reasoning.response || "D'accord, je vous propose d'autres options !",
+        reasoning: reasoning.reasoning || {},
         data: {}
       });
 
@@ -900,9 +1065,24 @@ router.post('/reservation-action', async (req, res) => {
       // Situation 3: Modification de la proposition
       console.log('🔄 Modification de la proposition');
       
-      // 1. Création du contexte avec les modifications
+      // 1. Récupérer les dates depuis modification OU params
+      let departureDate = modification?.departureDate || params?.departureDate;
+      let arrivalDate = modification?.arrivalDate || params?.arrivalDate;
+
+      // Si l'utilisateur a mis une nouvelle date unique (ex: 'newDates'), on peut l'utiliser pour les deux
+      if (modification?.newDates) {
+        departureDate = modification.newDates;
+        // Par défaut, +3 jours
+        const inDate = new Date(modification.newDates);
+        const outDate = new Date(inDate.getTime() + 3 * 24 * 60 * 60 * 1000);
+        arrivalDate = outDate.toISOString().slice(0, 10);
+      }
+
       const context = {
+        ...params,
         ...modification,
+        departureDate,
+        arrivalDate,
         previousProposal: params,
         modificationReason: message
       };
@@ -912,13 +1092,20 @@ router.post('/reservation-action', async (req, res) => {
       console.log('🧠 Nouveau raisonnement avec modifications');
 
       // 3. Envoi d'un email de modification si userEmail présent
-      if (params.userEmail) {
+      const userEmail = params.userEmail || modification?.userEmail;
+      if (userEmail) {
         const modificationSummary = `
           <h3>Votre demande de modification a bien été prise en compte !</h3>
           <p>Message : ${message}</p>
           <p>Nouvelle proposition : ${reasoning.response}</p>
         `;
-        await sendConfirmationEmail(params.userEmail, modificationSummary);
+        await sendConfirmationEmail(
+          userEmail,
+          modificationSummary,
+          params.departureLocation || params.departure || '',
+          params.arrivalLocation || params.destination || '',
+          params.userName || ''
+        );
         console.log('📧 Email de modification envoyé');
       }
 
@@ -937,6 +1124,64 @@ router.post('/reservation-action', async (req, res) => {
   } catch (error) {
     console.error('❌ Erreur lors du traitement de la réservation:', error);
     res.status(500).json({ error: 'Erreur lors du traitement de la réservation' });
+  }
+});
+
+// Route pour récupérer l'historique des conversations d'un utilisateur
+router.get('/history/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    console.log('Attempting to fetch history for userId:', userId);
+    
+    // Utiliser la nouvelle méthode statique pour trouver les conversations
+    const conversations = await Conversation.findByUserId(userId);
+    
+    console.log('Found', conversations.length, 'conversations for userId:', userId);
+    res.status(200).json({ conversations });
+  } catch (error) {
+    console.error('❌ Erreur lors de la récupération de l\'historique:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la récupération de l\'historique',
+      details: error.message 
+    });
+  }
+});
+
+// Nouvelle route pour créer une nouvelle conversation
+router.post('/new', async (req, res) => {
+  const { userId } = req.body;
+  console.log('🆕 Requête nouvelle conversation pour userId:', userId);
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId requis' });
+  }
+
+  try {
+    const newConversation = new Conversation({
+      userId: userId,
+      title: 'Nouvelle conversation',
+      messages: [{
+        role: 'bot',
+        text: 'Bonjour ! Je suis votre assistant de voyage. Comment puis-je vous aider ?',
+        timestamp: new Date()
+      }]
+    });
+
+    await newConversation.save();
+    console.log('✅ Nouvelle conversation créée avec ID:', newConversation._id);
+
+    res.status(200).json({ 
+      success: true, 
+      conversationId: newConversation._id, 
+      userId: newConversation.userId 
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur lors de la création de la conversation:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la création de la conversation',
+      details: error.message 
+    });
   }
 });
 
